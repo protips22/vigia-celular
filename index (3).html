@@ -1,0 +1,598 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>VIGÍA — Detector de Distracción por Celular</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+  tailwind.config = { theme: { extend: { fontFamily: { display:['Rajdhani','sans-serif'], body:['Inter','sans-serif'] } } } }
+</script>
+<link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.20.0/dist/tf.min.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js" crossorigin="anonymous"></script>
+<style>
+:root{
+  --bg:#0a0912;--panel:rgba(19,16,30,0.92);--border:rgba(168,85,247,0.18);
+  --accent:#a855f7;--accent-dim:rgba(168,85,247,0.25);
+  --alert:#ef4444;--alert-dim:rgba(239,68,68,0.25);
+  --warn:#f5a623;--warn-dim:rgba(245,166,35,0.25);
+  --text:#e7e3f5;--muted:#5c5870;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;
+  background-image:radial-gradient(circle at 15% 10%,rgba(168,85,247,.06),transparent 45%),
+    linear-gradient(rgba(168,85,247,.03) 1px,transparent 1px),linear-gradient(90deg,rgba(168,85,247,.03) 1px,transparent 1px);
+  background-size:auto,36px 36px,36px 36px;overflow-x:hidden}
+.font-display{font-family:'Rajdhani',sans-serif}
+.panel{background:var(--panel);border:1px solid var(--border);border-radius:12px;backdrop-filter:blur(8px);transition:border-color .3s,box-shadow .3s}
+.panel:hover{border-color:rgba(168,85,247,.4)}
+.cam-wrap{position:relative;border-radius:12px;overflow:hidden;border:2px solid var(--border);transform:scaleX(-1);transition:border-color .3s,box-shadow .3s}
+.cam-wrap.flag{border-color:var(--alert);box-shadow:0 0 40px var(--alert-dim)}
+.cam-wrap::after{content:'';position:absolute;inset:0;background:repeating-linear-gradient(0deg,transparent,transparent 3px,rgba(0,0,0,.04) 3px,rgba(0,0,0,.04) 6px);pointer-events:none;z-index:2}
+.cam-wrap video,.cam-wrap canvas{display:block;width:100%;height:auto}
+.cam-wrap canvas{position:absolute;top:0;left:0;z-index:1}
+.dot{width:10px;height:10px;border-radius:50%;display:inline-block;flex-shrink:0}
+.dot-ok{background:#22c55e;box-shadow:0 0 8px rgba(34,197,94,.35)}
+.dot-warn{background:var(--warn);box-shadow:0 0 8px var(--warn-dim);animation:pulse-warn .9s ease-in-out infinite}
+.dot-bad{background:var(--alert);box-shadow:0 0 8px var(--alert-dim);animation:pulse-bad .7s ease-in-out infinite}
+.dot-off{background:var(--muted)}
+@keyframes pulse-bad{0%,100%{box-shadow:0 0 8px var(--alert-dim);transform:scale(1)}50%{box-shadow:0 0 22px var(--alert-dim);transform:scale(1.35)}}
+@keyframes pulse-warn{0%,100%{box-shadow:0 0 8px var(--warn-dim);transform:scale(1)}50%{box-shadow:0 0 18px var(--warn-dim);transform:scale(1.25)}}
+.btn-go{background:linear-gradient(135deg,var(--accent),#7c3aed);color:#fff;font-weight:700;padding:14px 32px;border-radius:10px;border:none;cursor:pointer;font-family:'Inter',sans-serif;font-size:15px;transition:all .3s;box-shadow:0 0 24px var(--accent-dim)}
+.btn-go:hover{transform:translateY(-2px);box-shadow:0 10px 30px var(--accent-dim)}
+.btn-go:disabled{opacity:.35;cursor:not-allowed;transform:none;box-shadow:none}
+.btn-sec{background:rgba(168,85,247,0.06);color:var(--text);border:1px solid var(--border);padding:10px 20px;border-radius:10px;cursor:pointer;font-family:'Inter',sans-serif;font-size:13px;transition:all .3s}
+.btn-sec:hover{border-color:var(--accent);color:var(--accent);background:rgba(168,85,247,0.12)}
+.badge{background:rgba(168,85,247,0.15);border:1px solid var(--accent);color:var(--accent)}
+.log-entry{padding:5px 10px;border-left:2px solid var(--accent);font-size:11px;color:var(--text);background:rgba(168,85,247,0.04);margin-bottom:2px;animation:slideIn .25s ease}
+.log-entry.l-alert{border-left-color:var(--alert);color:#fca5a5;background:rgba(239,68,68,0.08)}
+.log-entry.l-warn{border-left-color:var(--warn);color:var(--warn);background:rgba(245,166,35,0.08)}
+@keyframes slideIn{from{opacity:0;transform:translateX(-8px)}to{opacity:1;transform:translateX(0)}}
+.spinner{width:18px;height:18px;border:2px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .7s linear infinite;display:inline-block;vertical-align:middle}
+@keyframes spin{to{transform:rotate(360deg)}}
+.log-scroll::-webkit-scrollbar{width:3px}.log-scroll::-webkit-scrollbar-track{background:transparent}.log-scroll::-webkit-scrollbar-thumb{background:var(--accent);border-radius:2px}
+input[type=range]{-webkit-appearance:none;appearance:none;height:5px;border-radius:3px;background:rgba(255,255,255,.07);outline:none}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:15px;height:15px;border-radius:50%;background:var(--accent);cursor:pointer;box-shadow:0 0 10px var(--accent-dim)}
+input[type=range]::-moz-range-thumb{width:15px;height:15px;border-radius:50%;background:var(--accent);cursor:pointer;border:none;box-shadow:0 0 10px var(--accent-dim)}
+.calib-badge{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%) scaleX(-1);z-index:5;
+  background:rgba(0,0,0,.85);padding:12px 24px;border-radius:10px;border:1px solid var(--accent);
+  font-family:'Rajdhani',sans-serif;font-size:12px;font-weight:600;letter-spacing:.5px;color:var(--accent);pointer-events:none;
+  display:flex;align-items:center;gap:10px}
+.step-list{text-align:left;display:flex;flex-direction:column;gap:8px;margin-top:24px;max-width:340px;margin-left:auto;margin-right:auto}
+.step-item{display:flex;align-items:center;gap:10px;font-size:13px;color:var(--muted);padding:6px 0}
+.step-item i{width:20px;text-align:center}
+.step-item.s-done{color:var(--accent)}
+.step-item.s-active{color:var(--warn)}
+.step-item.s-err{color:var(--alert)}
+/* Radar signature element */
+.radar{position:relative;width:170px;height:170px;border-radius:50%;border:1px solid rgba(168,85,247,.35);
+  display:flex;align-items:center;justify-content:center;margin:0 auto}
+.radar::before,.radar::after{content:'';position:absolute;border-radius:50%;border:1px solid rgba(168,85,247,.2)}
+.radar::before{inset:22px}
+.radar::after{inset:44px}
+.radar-sweep{position:absolute;inset:0;border-radius:50%;overflow:hidden;animation:sweep 3.2s linear infinite}
+.radar-sweep::before{content:'';position:absolute;inset:0;background:conic-gradient(from 0deg,rgba(168,85,247,.55),transparent 28%)}
+@keyframes sweep{to{transform:rotate(360deg)}}
+.radar-phone{position:relative;z-index:2;width:46px;height:46px;border-radius:9px;background:rgba(10,9,18,.9);
+  border:1px solid var(--accent);display:flex;align-items:center;justify-content:center;color:var(--accent);font-size:20px;
+  box-shadow:0 0 20px var(--accent-dim)}
+.status-ring{width:64px;height:64px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+  border:2px solid rgba(255,255,255,.08);flex-shrink:0;transition:all .3s}
+.status-ring.ok{border-color:rgba(34,197,94,.5);box-shadow:0 0 18px rgba(34,197,94,.15)}
+.status-ring.warn{border-color:var(--warn);box-shadow:0 0 18px var(--warn-dim)}
+.status-ring.bad{border-color:var(--alert);box-shadow:0 0 22px var(--alert-dim)}
+@media(max-width:1024px){.main-grid{grid-template-columns:1fr!important}}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;transition-duration:.01ms!important}}
+</style>
+</head>
+<body>
+
+<div id="start-screen" class="min-h-screen flex items-center justify-center px-4">
+  <div class="text-center relative">
+    <div class="radar mb-8">
+      <div class="radar-sweep"></div>
+      <div class="radar-phone"><i class="fa-solid fa-mobile-screen-button"></i></div>
+    </div>
+
+    <h1 class="font-display text-4xl md:text-5xl font-bold mb-2 tracking-wide" style="color:var(--accent)">VIGÍA</h1>
+    <p class="text-sm mb-1" style="color:var(--text)">Detector de distracción por uso de celular</p>
+    <p class="text-xs mb-6" style="color:var(--muted)">Reconoce el celular cuando aparece en cámara y también la mirada sostenida hacia abajo</p>
+
+    <div id="steps" class="step-list" style="display:none">
+      <div class="step-item" id="step1"><i class="fa-solid fa-circle-dot"></i><span>Solicitando permiso de cámara...</span></div>
+      <div class="step-item" id="step2"><i class="fa-solid fa-circle-dot"></i><span>Cargando modelos de IA (primer uso puede tardar)...</span></div>
+      <div class="step-item" id="step3"><i class="fa-solid fa-circle-dot"></i><span>Iniciando vigilancia...</span></div>
+    </div>
+
+    <button id="btn-start" class="btn-go"><i class="fa-solid fa-video mr-2"></i>Iniciar vigilancia</button>
+    <p id="start-error" class="text-sm mt-4 hidden" style="color:var(--alert)"></p>
+    <p id="start-hint" class="text-xs mt-4" style="color:var(--accent)"><i class="fa-solid fa-lock mr-1"></i> Las alertas se envían al servidor junto con una fotografía.</p>
+  </div>
+</div>
+
+<div id="monitor-screen" class="hidden min-h-screen p-4 md:p-6">
+  <header class="flex items-center justify-between mb-5 flex-wrap gap-3 pb-3 border-b border-[rgba(168,85,247,0.15)]">
+    <div class="flex items-center gap-3">
+      <i class="fa-solid fa-eye text-lg" style="color:var(--accent)"></i>
+      <h1 class="font-display text-base md:text-lg font-bold tracking-widest" style="color:var(--accent)">VIGÍA</h1>
+    </div>
+    <div class="flex items-center gap-5">
+      <span class="text-xs font-display badge px-2.5 py-1 rounded-md font-semibold"><i class="fa-regular fa-clock mr-1.5"></i><span id="uptime">00:00</span></span>
+      <span class="flex items-center gap-2 text-xs">
+        <span id="sys-dot" class="dot dot-ok"></span>
+        <span id="sys-label" class="font-semibold" style="color:var(--accent)">Vigilando</span>
+      </span>
+    </div>
+  </header>
+
+  <div class="main-grid grid gap-5" style="grid-template-columns:1.5fr 1fr">
+    <div>
+      <div id="cam-wrap" class="cam-wrap">
+        <video id="video" playsinline muted></video>
+        <canvas id="overlay"></canvas>
+        <div style="position:absolute;top:10px;left:10px;z-index:3;transform:scaleX(-1)">
+          <span class="font-display text-[10px] px-2.5 py-1 rounded badge flex items-center gap-1.5 font-semibold">
+            <span class="w-1.5 h-1.5 rounded-full" style="background:var(--accent)"></span>LIVE
+          </span>
+        </div>
+        <div style="position:absolute;bottom:10px;right:10px;z-index:3;transform:scaleX(-1)">
+          <span class="font-display text-[10px] px-2 py-0.5 rounded font-semibold" style="background:rgba(0,0,0,.7);color:var(--accent)"><span id="fps">0</span> FPS</span>
+        </div>
+        <div id="no-face" style="position:absolute;inset:0;z-index:3;display:none;align-items:center;justify-content:center;transform:scaleX(-1)">
+          <span class="font-display text-xs px-4 py-2 rounded-lg border border-[var(--warn)] font-semibold" style="background:rgba(0,0,0,.85);color:var(--warn)"><i class="fa-solid fa-triangle-exclamation mr-2"></i>Sin rostro detectado</span>
+        </div>
+        <div id="calib-badge" class="calib-badge" style="display:none">
+          <span class="spinner"></span><span>Calibrando...</span>
+        </div>
+      </div>
+
+      <div class="flex flex-wrap items-center gap-3 mt-4">
+        <button id="btn-stop" class="btn-sec"><i class="fa-solid fa-stop mr-1" style="color:var(--alert)"></i> Detener</button>
+        <span id="server-status" class="text-xs px-3 py-2 rounded-lg" style="color:var(--warn);border:1px solid rgba(245,166,35,.25);background:rgba(245,166,35,.05)">Servidor: conectando...</span>
+      </div>
+
+      <div class="panel p-4 mt-4">
+        <div class="text-[10px] uppercase tracking-widest mb-3 font-semibold" style="color:var(--accent)">Sensibilidad de detección</div>
+        <div class="flex flex-col gap-3">
+          <div class="flex items-center gap-3">
+            <label class="text-[11px] w-48 shrink-0" style="color:var(--text)"><i class="fa-solid fa-mobile-screen-button mr-1"></i>Confianza mínima celular</label>
+            <input type="range" id="phone-conf-slider" min="0.30" max="0.85" step="0.05" value="0.55" class="flex-1">
+            <span id="phone-conf-val" class="text-[11px] font-display w-10 text-right" style="color:var(--accent)">0.55</span>
+          </div>
+          <div class="flex items-center gap-3">
+            <label class="text-[11px] w-48 shrink-0" style="color:var(--text)"><i class="fa-regular fa-clock mr-1"></i>Tiempo visible antes de alertar</label>
+            <input type="range" id="phone-dur-slider" min="0.2" max="4" step="0.2" value="0.6" class="flex-1">
+            <span id="phone-dur-val" class="text-[11px] font-display w-10 text-right" style="color:var(--accent)">0.6s</span>
+          </div>
+          <div class="flex items-center gap-3">
+            <label class="text-[11px] w-48 shrink-0" style="color:var(--text)"><i class="fa-solid fa-arrow-down mr-1"></i>Umbral mirada abajo</label>
+            <input type="range" id="gaze-sens-slider" min="0.50" max="0.85" step="0.01" value="0.62" class="flex-1">
+            <span id="gaze-sens-val" class="text-[11px] font-display w-10 text-right" style="color:var(--accent)">0.62</span>
+          </div>
+          <div class="flex items-center gap-3">
+            <label class="text-[11px] w-48 shrink-0" style="color:var(--text)"><i class="fa-regular fa-clock mr-1"></i>Duración mirada abajo</label>
+            <input type="range" id="gaze-dur-slider" min="1" max="8" step="0.5" value="2.5" class="flex-1">
+            <span id="gaze-dur-val" class="text-[11px] font-display w-10 text-right" style="color:var(--accent)">2.5s</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="flex flex-col gap-3">
+      <div class="panel p-4 flex items-center gap-4">
+        <div id="status-ring" class="status-ring ok"><i id="status-icon" class="fa-solid fa-user-check text-xl" style="color:#22c55e"></i></div>
+        <div>
+          <div class="text-[9px] uppercase tracking-widest" style="color:var(--muted)">Estado actual</div>
+          <div id="status-lbl" class="font-display text-lg font-bold" style="color:#22c55e">Atento</div>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-2 gap-3">
+        <div class="panel p-3 text-center"><div class="text-[9px] uppercase tracking-widest" style="color:var(--text)">Alertas</div><div id="stat-alerts" class="font-display text-xl font-bold mt-1" style="color:var(--alert)">0</div></div>
+        <div class="panel p-3 text-center"><div class="text-[9px] uppercase tracking-widest" style="color:var(--text)">Tiempo distraído</div><div id="stat-time" class="font-display text-xl font-bold mt-1" style="color:var(--accent)">00:00</div></div>
+        <div class="panel p-3 text-center"><div class="text-[9px] uppercase tracking-widest" style="color:var(--text)">Celular visible</div><div id="stat-phone" class="font-display text-xl font-bold mt-1" style="color:#fca5a5">0</div></div>
+        <div class="panel p-3 text-center"><div class="text-[9px] uppercase tracking-widest" style="color:var(--text)">Mirada abajo</div><div id="stat-gaze" class="font-display text-xl font-bold mt-1" style="color:var(--warn)">0</div></div>
+      </div>
+
+      <div class="panel p-4 flex-1 min-h-[160px]">
+        <div class="text-[9px] uppercase tracking-widest mb-2 font-semibold" style="color:var(--accent)">Registro de eventos</div>
+        <div id="log" class="log-scroll flex flex-col gap-1 max-h-[260px] overflow-y-auto">
+          <div class="log-entry">Sistema iniciado</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ============ CONFIGURACION ============
+const WARMUP_MS = 3000;
+let GAZE_DOWN_THRESH = 0.62;      // 0=mirando arriba, 1=mirando abajo
+let GAZE_DOWN_DURATION = 2500;    // ms de mirada sostenida hacia abajo
+let PHONE_SCORE_THRESH = 0.55;    // confianza minima del detector de objetos
+let PHONE_VISIBLE_DURATION = 600; // ms que el celular debe verse antes de alertar
+const PHONE_COOLDOWN = 12000;
+
+// Landmarks (MediaPipe FaceMesh, refineLandmarks:true -> incluye iris)
+const L_EYE = [33,160,158,133,153,144];
+const R_EYE = [362,385,387,263,373,380];
+const L_IRIS = 468, R_IRIS = 473;
+
+// ============ ESTADO ============
+let running = false;
+let faceMeshInst = null;
+let phoneModel = null;
+let mediaStream = null;
+let rafId = null;
+let processing = false, processingPhoneModel = false;
+let canvasReady = false;
+let t0 = 0, fCnt = 0, fpsT = 0, curFps = 0;
+let warmup = true, warmupTimer = null;
+let lastFrameTs = 0;
+
+let faceDetected = false;
+let curGaze = 0;
+let lastFaceBBox = null;          // {x0,y0,x1,y1} normalizado (rostro)
+let latestPhoneBox = null;        // {x,y,w,h,score} en pixeles de video (objeto celular)
+
+let gazeDownStartTime = 0, phoneVisibleStartTime = 0;
+let gazeDownLocked = false, phoneVisibleLocked = false;
+let nAlerts = 0, nGazeEvents = 0, nPhoneDetections = 0;
+let distractedMs = 0;
+let lastPhoneAlertTime = 0;
+
+const $ = id => document.getElementById(id);
+const vid = $('video'), cvs = $('overlay'), ctx = cvs.getContext('2d');
+
+// ============ EVENTOS UI ============
+$('btn-start').addEventListener('click', startSystem);
+$('btn-stop').addEventListener('click', stopSystem);
+$('phone-conf-slider').addEventListener('input', function(){ PHONE_SCORE_THRESH=parseFloat(this.value); $('phone-conf-val').textContent=PHONE_SCORE_THRESH.toFixed(2); });
+$('phone-dur-slider').addEventListener('input', function(){ PHONE_VISIBLE_DURATION=parseFloat(this.value)*1000; $('phone-dur-val').textContent=parseFloat(this.value).toFixed(1)+'s'; });
+$('gaze-sens-slider').addEventListener('input', function(){ GAZE_DOWN_THRESH=parseFloat(this.value); $('gaze-sens-val').textContent=GAZE_DOWN_THRESH.toFixed(2); });
+$('gaze-dur-slider').addEventListener('input', function(){ GAZE_DOWN_DURATION=parseFloat(this.value)*1000; $('gaze-dur-val').textContent=parseFloat(this.value).toFixed(1)+'s'; });
+
+// ============ SERVIDOR ============
+const SERVER_URL = 'https://fatigue-watch.onrender.com';
+let sendingAlert = false;
+
+async function checkServer() {
+  try {
+    const r = await fetch(SERVER_URL + '/api/health', { cache: 'no-store' });
+    if (!r.ok) throw new Error('Servidor no disponible');
+    $('server-status').textContent = 'Servidor: conectado';
+    $('server-status').style.color = 'var(--accent)';
+    $('server-status').style.borderColor = 'var(--border)';
+    $('server-status').style.background = 'rgba(168,85,247,.05)';
+    return true;
+  } catch (e) {
+    $('server-status').textContent = 'Servidor: desconectado';
+    $('server-status').style.color = 'var(--alert)';
+    $('server-status').style.borderColor = 'rgba(239,68,68,.25)';
+    $('server-status').style.background = 'rgba(239,68,68,.05)';
+    return false;
+  }
+}
+
+function capturePhoto() {
+  if (!vid.videoWidth || !vid.videoHeight) return null;
+  const photo = document.createElement('canvas');
+  photo.width = vid.videoWidth; photo.height = vid.videoHeight;
+  const pctx = photo.getContext('2d');
+  pctx.translate(photo.width, 0); pctx.scale(-1, 1);
+  pctx.drawImage(vid, 0, 0, photo.width, photo.height);
+  return photo;
+}
+
+async function sendAlertToServer(type, title, reason) {
+  if (sendingAlert) return;
+  sendingAlert = true;
+  try {
+    const serverOk = await checkServer();
+    if (!serverOk) { addLog('No se pudo enviar la alerta: servidor desconectado', 'alert'); return; }
+    const photoCanvas = capturePhoto();
+    if (!photoCanvas) { addLog('No se pudo tomar la fotografía', 'alert'); return; }
+    const blob = await new Promise(resolve => photoCanvas.toBlob(resolve, 'image/jpeg', 0.85));
+    if (!blob) throw new Error('No se pudo convertir la fotografía');
+    const form = new FormData();
+    form.append('photo', blob, 'captura.jpg');
+    form.append('type', type);
+    form.append('title', title);
+    form.append('reason', reason);
+    form.append('client_time', new Date().toISOString());
+    const response = await fetch(SERVER_URL + '/api/alert', { method: 'POST', body: form });
+    const data = await response.json();
+    if (!response.ok || !data.ok) throw new Error(data.error || 'Error del servidor');
+    addLog('Alerta enviada al servidor correctamente', 'alert');
+  } catch (err) {
+    console.error('Error enviando alerta:', err);
+    addLog('Error enviando alerta: ' + err.message, 'alert');
+  } finally {
+    sendingAlert = false;
+  }
+}
+
+// ============ CALCULOS ============
+// Posicion vertical del iris dentro del parpado: 0=mirando arriba, 1=mirando abajo.
+function calcGazeVert(lm, eyeIdx, irisIdx) {
+  const upperY = (lm[eyeIdx[1]].y + lm[eyeIdx[2]].y) / 2;
+  const lowerY = (lm[eyeIdx[4]].y + lm[eyeIdx[5]].y) / 2;
+  const span = Math.max(0.0008, lowerY - upperY);
+  const iris = lm[irisIdx];
+  if (!iris) return 0.5;
+  return Math.min(1, Math.max(0, (iris.y - upperY) / span));
+}
+
+// ============ DIBUJO ============
+function drawOverlay(lm) {
+  const w = cvs.width, h = cvs.height;
+  ctx.clearRect(0, 0, w, h);
+
+  let x0=1,y0=1,x1=0,y1=0;
+  lm.forEach(p=>{x0=Math.min(x0,p.x);y0=Math.min(y0,p.y);x1=Math.max(x1,p.x);y1=Math.max(y1,p.y)});
+  lastFaceBBox = {x0,y0,x1,y1};
+  const pd=.02, bx=(x0-pd)*w, by=(y0-pd)*h, bw=(x1-x0+2*pd)*w, bh=(y1-y0+2*pd)*h;
+
+  const gazeFlag = curGaze > GAZE_DOWN_THRESH;
+  ctx.strokeStyle = gazeFlag ? 'rgba(245,166,35,.55)' : 'rgba(168,85,247,.3)';
+  ctx.lineWidth=1; ctx.setLineDash([6,4]); ctx.strokeRect(bx,by,bw,bh); ctx.setLineDash([]);
+  const cl=14; ctx.strokeStyle = gazeFlag ? '#f5a623' : '#a855f7'; ctx.lineWidth=2;
+  [[bx,by,1,1],[bx+bw,by,-1,1],[bx,by+bh,1,-1],[bx+bw,by+bh,-1,-1]].forEach(([cx,cy,dx,dy])=>{
+    ctx.beginPath();ctx.moveTo(cx,cy+cl*dy);ctx.lineTo(cx,cy);ctx.lineTo(cx+cl*dx,cy);ctx.stroke()});
+
+  ctx.font='11px Rajdhani'; ctx.fillStyle = gazeFlag ? '#f5a623' : '#a855f7';
+  ctx.fillText('MIRADA: '+curGaze.toFixed(2), bx+4, by-6);
+
+  drawPhoneBox();
+}
+
+function drawPhoneBox() {
+  if (!latestPhoneBox) return;
+  const {x,y,w,h,score} = latestPhoneBox;
+  ctx.strokeStyle='#ef4444'; ctx.lineWidth=2.5; ctx.setLineDash([]);
+  ctx.strokeRect(x,y,w,h);
+  ctx.font='11px Rajdhani'; ctx.fillStyle='#ef4444';
+  ctx.fillText('CELULAR '+Math.round(score*100)+'%', x+2, y>14 ? y-6 : y+h+14);
+}
+
+// ============ DETECCION ============
+function checkGazeDown() {
+  if (warmup || !faceDetected) { gazeDownStartTime = 0; return; }
+  const now = Date.now();
+  if (curGaze > GAZE_DOWN_THRESH) {
+    if (gazeDownStartTime === 0) gazeDownStartTime = now;
+    if (now - gazeDownStartTime >= GAZE_DOWN_DURATION && !gazeDownLocked) {
+      gazeDownLocked = true;
+      nGazeEvents++; $('stat-gaze').textContent = nGazeEvents;
+      registerPhoneEvent('Mirada sostenida hacia abajo (' + (GAZE_DOWN_DURATION/1000).toFixed(1) + 's)');
+    }
+  } else {
+    gazeDownStartTime = 0; gazeDownLocked = false;
+  }
+}
+
+// El celular aparece visualmente en camara (deteccion real de objeto, no solo postura).
+function checkPhoneVisible() {
+  if (warmup) { phoneVisibleStartTime = 0; return; }
+  const now = Date.now();
+  if (latestPhoneBox) {
+    if (phoneVisibleStartTime === 0) phoneVisibleStartTime = now;
+    if (now - phoneVisibleStartTime >= PHONE_VISIBLE_DURATION && !phoneVisibleLocked) {
+      phoneVisibleLocked = true;
+      nPhoneDetections++; $('stat-phone').textContent = nPhoneDetections;
+      registerPhoneEvent('Celular detectado en cámara (confianza ' + Math.round(latestPhoneBox.score*100) + '%)');
+    }
+  } else {
+    phoneVisibleStartTime = 0; phoneVisibleLocked = false;
+  }
+}
+
+function updateDistractedTime(deltaMs) {
+  if (warmup) return;
+  if (latestPhoneBox || (faceDetected && curGaze > GAZE_DOWN_THRESH)) {
+    distractedMs += deltaMs;
+    const s = Math.floor(distractedMs/1000);
+    $('stat-time').textContent = String(Math.floor(s/60)).padStart(2,'0')+':'+String(s%60).padStart(2,'0');
+  }
+}
+
+function registerPhoneEvent(reason) {
+  addLog('POSIBLE USO DE CELULAR: ' + reason, 'warn');
+  const now = Date.now();
+  if (now - lastPhoneAlertTime >= PHONE_COOLDOWN) {
+    lastPhoneAlertTime = now;
+    nAlerts++; $('stat-alerts').textContent = nAlerts;
+    addLog('ALERTA: uso de celular detectado', 'alert');
+    sendAlertToServer('celular', 'USO DE CELULAR', reason);
+  }
+}
+
+// ============ INTERFAZ ============
+function refreshStatus() {
+  const ring = $('status-ring'), icon = $('status-icon'), lbl = $('status-lbl');
+  if (latestPhoneBox) {
+    ring.className='status-ring bad'; icon.className='fa-solid fa-mobile-screen-button text-xl'; icon.style.color='var(--alert)';
+    lbl.textContent='Celular en cámara'; lbl.style.color='var(--alert)';
+  } else if (!faceDetected) {
+    ring.className='status-ring'; icon.className='fa-solid fa-user-slash text-xl'; icon.style.color='var(--muted)';
+    lbl.textContent='Sin rostro'; lbl.style.color='var(--muted)';
+  } else if (curGaze > GAZE_DOWN_THRESH) {
+    ring.className='status-ring warn'; icon.className='fa-solid fa-arrow-down text-xl'; icon.style.color='var(--warn)';
+    lbl.textContent='Mirando hacia abajo'; lbl.style.color='var(--warn)';
+  } else {
+    ring.className='status-ring ok'; icon.className='fa-solid fa-user-check text-xl'; icon.style.color='#22c55e';
+    lbl.textContent='Atento'; lbl.style.color='#22c55e';
+  }
+  $('cam-wrap').classList.toggle('flag', !!latestPhoneBox);
+}
+
+function refreshUI() {
+  if (t0) { const s=Math.floor((Date.now()-t0)/1000); $('uptime').textContent=String(Math.floor(s/60)).padStart(2,'0')+':'+String(s%60).padStart(2,'0'); }
+  $('no-face').style.display = faceDetected ? 'none' : 'flex';
+  refreshStatus();
+}
+
+function addLog(msg, cls) {
+  const l = $('log'), e = document.createElement('div');
+  e.className='log-entry'+(cls?' l-'+cls:'');
+  e.textContent='['+new Date().toLocaleTimeString('es-ES',{hour:'2-digit',minute:'2-digit',second:'2-digit'})+'] '+msg;
+  l.insertBefore(e,l.firstChild); while(l.children.length>50) l.removeChild(l.lastChild);
+}
+
+function setStep(id, state) {
+  const el = $(id); if (!el) return;
+  const icon = el.querySelector('i');
+  el.className = 'step-item' + (state ? ' s-' + state : '');
+  if (state === 'done') icon.className = 'fa-solid fa-circle-check';
+  else if (state === 'active') icon.className = 'fa-solid fa-spinner fa-spin';
+  else if (state === 'err') icon.className = 'fa-solid fa-circle-xmark';
+  else icon.className = 'fa-solid fa-circle-dot';
+}
+
+// ============ CICLO PRINCIPAL ============
+function frameLoop() {
+  if (!running) return;
+  rafId = requestAnimationFrame(frameLoop);
+
+  if (!processing && faceMeshInst && vid.readyState >= 2) {
+    processing = true;
+    faceMeshInst.send({ image: vid }).then(()=>{processing=false}).catch(err=>{processing=false;console.warn('Error frame (rostro):',err)});
+  }
+
+  if (!processingPhoneModel && phoneModel && vid.readyState >= 2) {
+    processingPhoneModel = true;
+    phoneModel.detect(vid).then(preds => {
+      const phone = preds.find(p => p.class === 'cell phone' && p.score >= PHONE_SCORE_THRESH);
+      latestPhoneBox = phone ? { x:phone.bbox[0], y:phone.bbox[1], w:phone.bbox[2], h:phone.bbox[3], score:phone.score } : null;
+      processingPhoneModel = false;
+    }).catch(err => { processingPhoneModel = false; console.warn('Error deteccion celular:', err); });
+  }
+}
+
+function onResults(res) {
+  fCnt++;
+  const now = performance.now();
+  if (now - fpsT >= 1000) { curFps=fCnt; fCnt=0; fpsT=now; $('fps').textContent=curFps; }
+  if (!canvasReady && vid.videoWidth) { cvs.width=vid.videoWidth; cvs.height=vid.videoHeight; canvasReady=true; }
+
+  const nowMs = Date.now();
+  const deltaMs = lastFrameTs ? (nowMs - lastFrameTs) : 0;
+  lastFrameTs = nowMs;
+
+  if (res.multiFaceLandmarks && res.multiFaceLandmarks.length > 0) {
+    faceDetected = true;
+    const lm = res.multiFaceLandmarks[0];
+    curGaze = (calcGazeVert(lm, L_EYE, L_IRIS) + calcGazeVert(lm, R_EYE, R_IRIS)) / 2;
+    drawOverlay(lm);
+    checkGazeDown();
+  } else {
+    faceDetected = false; curGaze = 0; lastFaceBBox = null; gazeDownStartTime = 0;
+    if (canvasReady) { ctx.clearRect(0, 0, cvs.width, cvs.height); drawPhoneBox(); }
+  }
+  checkPhoneVisible();
+  updateDistractedTime(deltaMs);
+  refreshUI();
+}
+
+async function startSystem() {
+  const btn = $('btn-start');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner mr-2"></span> Iniciando...';
+  $('start-error').classList.add('hidden');
+  $('start-hint').style.display = 'none';
+  $('steps').style.display = 'flex';
+
+  setStep('step1', 'active');
+  try {
+    mediaStream = await navigator.mediaDevices.getUserMedia({ video: { width:{ideal:640}, height:{ideal:480}, facingMode:'user' } });
+  } catch (err) {
+    console.error('Error cámara:', err);
+    setStep('step1', 'err');
+    let msg = 'No se pudo acceder a la cámara.';
+    if (err.name === 'NotAllowedError') msg = 'Permiso denegado. Permite el acceso a la cámara en el navegador.';
+    else if (err.name === 'NotFoundError') msg = 'No se encontró ninguna cámara conectada.';
+    $('start-error').textContent = msg; $('start-error').classList.remove('hidden');
+    btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-video mr-2"></i> Reintentar';
+    return;
+  }
+  setStep('step1', 'done');
+
+  vid.srcObject = mediaStream;
+  try { await vid.play(); } catch(err) {
+    console.error('Error play:', err);
+    setStep('step1', 'err');
+    $('start-error').textContent = 'El navegador bloqueó la reproducción automática.';
+    $('start-error').classList.remove('hidden');
+    btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-video mr-2"></i> Reintentar';
+    mediaStream.getTracks().forEach(t => t.stop());
+    return;
+  }
+
+  setStep('step2', 'active');
+  btn.innerHTML = '<span class="spinner mr-2"></span> Cargando IA...';
+  try {
+    faceMeshInst = new FaceMesh({ locateFile: f => 'https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/' + f });
+    faceMeshInst.setOptions({ maxNumFaces:1, refineLandmarks:true, minDetectionConfidence:0.5, minTrackingConfidence:0.5 });
+    faceMeshInst.onResults(onResults);
+    await faceMeshInst.send({ image: vid });
+
+    phoneModel = await cocoSsd.load({ base: 'lite_mobilenet_v2' });
+  } catch (err) {
+    console.error('Error modelo:', err);
+    setStep('step2', 'err');
+    $('start-error').textContent = 'Error al cargar el modelo de IA. Revisa tu conexión.';
+    $('start-error').classList.remove('hidden');
+    btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-video mr-2"></i> Reintentar';
+    mediaStream.getTracks().forEach(t => t.stop());
+    return;
+  }
+  setStep('step2', 'done');
+
+  setStep('step3', 'active');
+  $('start-screen').classList.add('hidden');
+  $('monitor-screen').classList.remove('hidden');
+  running = true; t0 = Date.now(); fpsT = performance.now(); processing = false; lastFrameTs = 0;
+  rafId = requestAnimationFrame(frameLoop);
+
+  warmup = true;
+  $('calib-badge').style.display = 'flex';
+  addLog('Calibrando modelo...');
+  warmupTimer = setTimeout(() => {
+    warmup = false;
+    $('calib-badge').style.display = 'none';
+    addLog('Calibración completada. Vigilancia activa.');
+  }, WARMUP_MS);
+}
+
+function stopSystem() {
+  running = false;
+  if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
+  if (warmupTimer) { clearTimeout(warmupTimer); warmupTimer = null; }
+  if (mediaStream) { mediaStream.getTracks().forEach(t => t.stop()); mediaStream = null; }
+  vid.srcObject = null;
+  if (faceMeshInst) { try { faceMeshInst.close(); } catch(e){} faceMeshInst = null; }
+  phoneModel = null; processingPhoneModel = false; latestPhoneBox = null; lastFaceBBox = null;
+  $('cam-wrap').classList.remove('flag');
+  $('monitor-screen').classList.add('hidden');
+  $('start-screen').classList.remove('hidden');
+  const btn = $('btn-start');
+  btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-video mr-2"></i>Iniciar vigilancia';
+  $('start-hint').style.display = 'block';
+  $('steps').style.display = 'none';
+  ['step1','step2','step3'].forEach(id => setStep(id, ''));
+
+  canvasReady=false; warmup=true; faceDetected=false; processing=false;
+  curGaze=0; gazeDownStartTime=0; phoneVisibleStartTime=0;
+  gazeDownLocked=false; phoneVisibleLocked=false;
+  nAlerts=0; nGazeEvents=0; nPhoneDetections=0; distractedMs=0; lastPhoneAlertTime=0; lastFrameTs=0;
+  $('stat-alerts').textContent='0'; $('stat-gaze').textContent='0'; $('stat-phone').textContent='0'; $('stat-time').textContent='00:00';
+}
+
+checkServer();
+setInterval(checkServer, 5000);
+</script>
+</body>
+</html>
