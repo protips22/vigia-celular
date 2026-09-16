@@ -1,0 +1,9 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>VIGÍA | Panel de alertas</title>
+<style>body{font-family:Arial,sans-serif;background:#0a0912;color:#eee;padding:24px}h1{color:#a855f7}.card{background:#191326;border:1px solid #49305f;border-radius:12px;padding:16px;margin:12px 0}.time{color:#a855f7;font-size:12px}img{max-width:320px;border-radius:8px;margin-top:10px}#status{color:#22c55e}</style>
+</head><body><h1>VIGÍA CELULAR — Panel de alertas</h1><p id="status">Conectando...</p><div id="alerts">Cargando alertas...</div>
+<script>
+async function load(){try{const r=await fetch('/api/alerts');const data=await r.json();document.getElementById('status').textContent='Servidor conectado · '+data.length+' alertas';document.getElementById('alerts').innerHTML=data.length?data.map(a=>`<div class="card"><div class="time">${a.time||''}</div><h3>${a.type||'Distracción detectada'}</h3><p>${a.message||''}</p>${a.image?`<img src="${a.image}" alt="Evidencia">`:''}</div>`).join(''):'<div class="card">No hay alertas todavía.</div>'}catch(e){document.getElementById('status').textContent='No se pudo conectar al servidor';}}load();setInterval(load,3000);
+</script></body></html>
