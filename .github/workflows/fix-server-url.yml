@@ -1,0 +1,47 @@
+name: Fix VIGIA server URL
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  fix-server-url:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Descargar repositorio
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Cambiar servidor de Fatigue Watch a VIGIA
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('index.html')
+          content = path.read_text(encoding='utf-8')
+          old = "const SERVER_URL = 'https://fatigue-watch.onrender.com';"
+          new = "const SERVER_URL = window.location.origin;"
+
+          if old in content:
+              path.write_text(content.replace(old, new), encoding='utf-8')
+              print('URL del servidor actualizada.')
+          else:
+              print('La URL antigua no está presente; no se hicieron cambios.')
+          PY
+
+      - name: Guardar cambio en GitHub
+        run: |
+          if git diff --quiet -- index.html; then
+            echo "No hay cambios pendientes."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add index.html
+          git commit -m "Fix VIGIA alert server URL"
+          git push
